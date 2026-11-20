@@ -26,7 +26,7 @@ Extra tools: `acad_health`, `acad_dialogs`, `acad_dialog_press`, `acad_clear_inp
 | `skills/autocad-ops/` | Claude Code skill: starting AutoCAD, dialogs, crashes, a stuck command line, LISP through the command line, big drawings, plot styles, localized AutoCAD. |
 | `tools/` | `cmdline.ps1` (command-line text), `acad_keys.ps1` (real keystrokes), `shot_acad.ps1` (window screenshot), `cmd_probe.py` (explore an interactive command), `pc3_custom_size.py` (paper sizes beyond DWG To PDF's), `ctb_variant.py` (plot-style variants), `sync_skills.py`. |
 
-**SOFiCAD:** the separate repo **soficad-mcp** builds SOFiCAD reinforcement drawings on top of this one (its
+**SOFiCAD:** the separate repo [soficad-mcp](https://github.com/SweetBubalehj/soficad-mcp) builds SOFiCAD reinforcement drawings on top of this one (its
 own `soficad` server uses this guard).
 
 ## Requirements
@@ -41,7 +41,7 @@ The skill and `pip.ini` expect the repo in `C:\autocad-mcp`; the server finds it
 itself. The repo root doubles as the venv:
 
 ```powershell
-git clone <this repo> C:\autocad-mcp
+git clone https://github.com/SweetBubalehj/autocad-mcp.git C:\autocad-mcp
 cd C:\autocad-mcp
 py -3.15 -m venv .
 Scripts\pip install -r requirements.lock.txt      # pip.ini pins autocad-mcp-pro (constraints.txt)
