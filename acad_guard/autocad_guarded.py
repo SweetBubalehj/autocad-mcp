@@ -10,6 +10,8 @@ autocad-mcp-pro (site-packages/server.py) is imported and run as is, with additi
                line), recovers if it was a crash, and adds the diagnosis to the error;
                a call that failed only on a stale COM connection is retried once.
   - acad_* tools: acad_health, acad_dialogs, acad_dialog_press, acad_restart, acad_events.
+  - an OLE message filter on autocad-mcp-pro's COM thread (calls a busy AutoCAD rejects are retried) and
+    English fallback linetypes for localized AutoCAD.
   - autocad-mcp-pro's own fallback that starts AutoCAD through COM Dispatch is disabled: the guard
     starts it (a COM-started AutoCAD would come up without SOFiCAD's UI and API).
 Rules for windows and the start command: guard_config.json; history: events.jsonl.
@@ -25,10 +27,13 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import chain_layout  # noqa: E402
 import guard  # noqa: E402
+import message_filter  # noqa: E402
 import server as acad_server  # noqa: E402  autocad-mcp-pro (site-packages/server.py)
 import backends.com_backend as com_backend  # noqa: E402
 import config as acad_config  # noqa: E402
+import engineering.arch.draw as arch_draw  # noqa: E402
 import win32com.client  # noqa: E402
 from fastmcp import Context  # noqa: E402
 from fastmcp.exceptions import ToolError  # noqa: E402
@@ -83,6 +88,128 @@ def _load_linetype_any_language(doc, name: str, lin_file: str) -> None:
 
 
 com_backend._load_linetype = _load_linetype_any_language
+
+# autocad-mcp-pro makes every COM call on one executor thread and retries a rejected call only in a few reads,
+# so a busy AutoCAD ("Вызов был отклонен" / RPC_E_CALL_REJECTED, e.g. while it hatches the walls of
+# arch_plan_from_spec) failed a whole tool call. With a message filter on that thread COM retries the call by
+# itself (up to 20 s); the executor's initializer is looked up when the backend connects, i.e. after this.
+_com_init_orig = com_backend._com_init
+
+
+def _com_init_with_retry() -> None:
+    _com_init_orig()
+    if not message_filter.register(timeout_s=20):
+        guard.log_event("message_filter_failed")
+
+
+com_backend._com_init = _com_init_with_retry
+
+# arch chains (arch_dimension_chains, arch_plan_from_spec) set the DIMSCALE system variable to the plot scale
+# while they draw, but dimensions added through COM do not take it: they kept ScaleFactor 1, so at 1:100 their
+# 2.5 text and arrows were 2.5 mm in the model - invisible on the sheet (AutoCAD 2027). Give each chain
+# dimension the scale itself. Both callers look draw_chains up in the module at call time.
+_draw_chains_orig = arch_draw.draw_chains
+
+
+ARCH_TICK = 4             # AcDimArrowheadType acArrowArchTick
+MOVE_TEXT_NO_LEADER = 2   # AcDimTextMovement acMoveTextNoLeader
+
+
+def _dim_text(dim) -> str:
+    """The text a dimension shows: its override, else the measurement at the style's precision, trailing zeros
+    suppressed as DIMZIN says (ISO-25: precision 2, "900" not "900.00") and with its decimal separator."""
+    if dim.TextOverride:
+        return dim.TextOverride
+    text = f"{float(dim.Measurement):.{int(dim.PrimaryUnitsPrecision)}f}"
+    if dim.SuppressTrailingZeros and "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text.replace(".", dim.DecimalSeparator or ".")
+
+
+def _untangle_chain_texts(doc, res: dict, factor: float) -> int:
+    """Lay out the texts of each chain row with chain_layout.layout_row (no two overlap): measure each text in
+    the drawing, keep fitting ones inside their segment (TextInside - AutoCAD's best fit would otherwise move
+    some of them out) and set the moved ones' positions. Returns how many texts were moved off their centre."""
+    rows: dict[str, list] = {}
+    for h, d in zip(res["handles"], res["dimensions"]):
+        rows.setdefault(d["row"], []).append((doc.HandleToObject(h), d))
+    first = next(iter(rows.values()))[0][0]
+    height, gap = float(first.TextHeight) * factor, float(first.TextGap) * factor
+    pad = max(gap, 0.4 * height)          # free space kept on each side of a text
+    widths: dict[str, float] = {}
+
+    def width(text: str) -> float:
+        if text not in widths:
+            probe = doc.ModelSpace.AddText(text, com_backend._apoint(0, 0), height)
+            probe.StyleName = first.TextStyle
+            lo, hi = probe.GetBoundingBox()
+            widths[text] = hi[0] - lo[0]
+            probe.Delete()
+        return widths[text]
+
+    def axis_of(items) -> int:
+        f, t = items[0][1]["from"], items[0][1]["to"]
+        return 0 if abs(t[0] - f[0]) >= abs(t[1] - f[1]) else 1
+
+    bounds = {row: {p for _, d in items for p in (d["from"][axis_of(items)], d["to"][axis_of(items)])}
+              for row, items in rows.items()}
+    moved = 0
+    for row, items in rows.items():
+        axis = axis_of(items)
+        segments = []
+        for dim, d in items:
+            a, b = sorted((d["from"][axis], d["to"][axis]))
+            segments.append((a, b, width(_dim_text(dim)) + 2 * pad))
+            dim.TextInside = True
+        layout = chain_layout.layout_row(segments, bounds[row], bounds[row] | chain_layout.farther_lines(bounds, row))
+        for (dim, _), (c, off_centre) in zip(items, layout):
+            if off_centre:
+                p = list(dim.TextPosition)
+                p[axis] = c
+                dim.TextMovement = MOVE_TEXT_NO_LEADER
+                dim.TextPosition = com_backend._apoint(p[0], p[1])
+                moved += 1
+    return moved
+
+
+async def _draw_chains_scaled(backend, *args, **kwargs):
+    res = await _draw_chains_orig(backend, *args, **kwargs)
+    factor = float(res.get("dimscale") or 1.0)
+    if getattr(backend, "name", "") == "com" and res.get("handles"):
+        def apply() -> int:
+            doc = com_backend._acad_doc()
+            for h in res["handles"]:
+                dim = doc.HandleToObject(h)
+                if abs(float(dim.ScaleFactor) - factor) > 1e-9:
+                    dim.ScaleFactor = factor
+                # architectural ticks: arrows do not fit a 120 mm segment and flip onto the neighbours
+                dim.Arrowhead1Type = dim.Arrowhead2Type = ARCH_TICK
+            return _untangle_chain_texts(doc, res, factor)
+        res["texts_moved_beside"] = await backend._run(apply)
+    return res
+
+
+arch_draw.draw_chains = _draw_chains_scaled
+
+# Tables (entity_create_table and the arch schedules) kept the table style's top alignment: the text sat on
+# the top rule of each 7-mm row. Centre every cell, title and header rows included.
+_create_table_orig = com_backend.ComBackend.entity_create_table
+ROW_TYPES, MIDDLE_CENTER = (1, 2, 4), 5   # AcRowType data / title / header (one per call: a combined mask
+#                                           is refused, "Неверный ввод"), AcCellAlignment acMiddleCenter
+
+
+def centre_table(table) -> None:
+    for row_type in ROW_TYPES:
+        table.SetAlignment(row_type, MIDDLE_CENTER)
+
+
+async def _create_table_centred(self, *args, **kwargs):
+    info = await _create_table_orig(self, *args, **kwargs)
+    await self._run(lambda: centre_table(com_backend._acad_doc().HandleToObject(info.handle)))
+    return info
+
+
+com_backend.ComBackend.entity_create_table = _create_table_centred
 
 GUARD_TOOLS = {"acad_health", "acad_dialogs", "acad_dialog_press", "acad_restart", "acad_events"}
 # errors that mean "AutoCAD did not answer" rather than "the tool refused / bad input"

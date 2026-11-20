@@ -88,7 +88,10 @@ This skill covers plain AutoCAD. With SOFiCAD, skill **soficad-ops** (repo sofic
 - **The crash dialog chain is handled:** Error Aborting → OK; Error Report → close; "AutoCAD cannot continue… save?" → Yes (`*_recover.dwg`; the original is untouched).
 - **A Python process (not AutoCAD) crashing with exit code 5** (access violation): `CoUninitialize` between two COM sessions in the same thread. Initialise COM once per thread and never uninitialise it.
   - `faulthandler` also prints harmless `0x80010001` (call rejected) exceptions that COM handles itself.
-- **Transient COM errors** (`<unknown>.FullName`, `AutoCAD.Application.ActiveDocument`, `Property 'Item.X' can not be set.`) mean AutoCAD briefly rejected a call while busy after a big operation, a save or a layout switch; win32com reports it as an AttributeError. Retry for up to 15 s; errors that persist mean a stuck command line (see above).
+- **Transient COM errors** (`<unknown>.FullName`, `AutoCAD.Application.ActiveDocument`, `Property 'Item.X' can not be set.`, "Вызов был отклонен" / RPC_E_CALL_REJECTED) mean AutoCAD briefly rejected a call while busy after a big operation, a save or a layout switch; win32com reports some of them as an AttributeError.
+  - The `autocad` server's COM thread has an OLE message filter (`acad_guard\message_filter.py`, since 2026-11-20): COM itself retries a rejected call every 0.1 s for up to 20 s. Before it, `arch_plan_from_spec` failed halfway with "Вызов был отклонен" and left a partial plan (its rollback did not run).
+  - Measured: 20 Documents.Add/read/Close rounds gave 5 errors without the filter, 0 with it (14 retries).
+  - Own scripts: `message_filter.register()` once on the thread after `CoInitialize`. Errors that persist mean a stuck command line (see above).
 
 ## LISP through the command line
 - **At most 240 chars per INPUT LINE.** A longer line is truncated and AutoCAD hangs at `(_>`.
@@ -139,7 +142,22 @@ This skill covers plain AutoCAD. With SOFiCAD, skill **soficad-ops** (repo sofic
   - `MSpace = True` fails with "There is no active modelspace viewport" when the new viewport is off screen: zoom the paper first.
   - `SetVariable("LAYOUTCREATEVIEWPORT", 0)` needs a short (`VARIANT(VT_I2, 0)`).
 
+## Architectural plans (`arch_*`; a 100 m² house checked 2026-11-20 in Russian AutoCAD)
+- **`arch_plan_from_spec`** draws walls (mm, axes, junctions mitred), doors, windows, room labels with MEASURED areas, the exterior chains and the door / window / room schedules in one call (about 20 s for 12 walls, 18 openings, 9 rooms). Separate exterior walls per side keep opening `offset`s simple; give them in CCW order so `swing: "in"` opens inwards.
+- **Language:** `lang` is `en` or `tr` only. Room names are free text (Cyrillic works); the area label is "5.73 m²" and the schedules have English headers. `text_find_replace` reaches TEXT/MTEXT (labels: " m²" → " м²", "." → ","), not TABLE cells: translate those over COM (`table.SetText(row, col, …)`, `DeleteColumns` for the internal WALL column, `SetColumnWidth`, `RecomputeTableBlock`).
+- **Font:** the Standard style uses `txt.shx`, which has no "²" (shown as "?"). ISOCPEUR (Windows Fonts) has Cyrillic, "²" and "№": `doc.TextStyles.Item("Standard").SetFont("ISOCPEUR", False, False, 204, 34)`. `system_run_lisp` refuses every `vla-*` expression (denylist), so do it over COM.
+- **Chain dimensions** (wrapper, since 2026-11-20; `arch_dimension_chains` and `arch_plan_from_spec` both get it):
+  - The chains set DIMSCALE while drawing, but COM-added dimensions keep ScaleFactor 1 (2.5 mm text in the model: no numbers on a 1:100 sheet). The wrapper sets each one's ScaleFactor to the scale.
+  - Architectural ticks instead of arrows (arrows do not fit a 120 mm segment and flip onto the neighbours).
+  - The texts are laid out per row by `acad_guard\chain_layout.py` (pure, tested offline): a text that fits stays inside its segment (`TextInside`; AutoCAD's best fit moved some out on its own), a 120 / 250 / 400 wall's text goes beside its segment and a neighbour slides within its own segment to make room. Texts never overlap and never cross their own row's extension lines; the farther rows' extension lines (walls, overall run through the openings row) are avoided where there is room. The result reports `texts_moved_beside`.
+  - Width = the text AutoCAD shows (ISO-25 has precision 2 with trailing zeros suppressed: "900", not "900.00"), measured with a probe TEXT in the dimension's style.
+  - Check a row objectively: take each dimension's `TextPosition` and the measured width of its text, cluster the rows by the text line, and look for overlapping intervals.
+- **Tables** (`entity_create_table`, the arch schedules): the wrapper centres every cell (`SetAlignment(row_type, acMiddleCenter)` once per row type 1 / 2 / 4 - a combined mask is refused with "Неверный ввод"); before, the text sat on the top rule of each row.
+- **Sizes at 1:100:** label names are 350 mm high and start at `at`, left-aligned: in rooms narrower than about 2.2 m scale the three label texts by 0.8 about the name's insertion and move them (`entity_batch_modify`). A schedule row is 0.7 m: 9 rooms ≈ 8.4 m of table, so place tables from their real `bbox`.
+- **Sheet:** a new layout gets AutoCAD's default viewport when it is first shown or plotted (`viewport_list` showed none before): list again after the first plot and delete it, or the plan appears twice. DWG To PDF's "ISO A2" has margins (17 / 5 mm), so a 594 × 420 frame at the paper origin is clipped: use `ISO_full_bleed_A2_(594.00_x_420.00_MM)` (`layout.CanonicalMediaName` over COM; `CenterPlot` is refused for layout plots, `PlotOrigin` 0,0). Put the viewport on a layer with `Plottable = False`, or its frame prints around the drawing.
+- **Check the PDF, not only the model screenshot:** render it (`pypdfium2` is in the venv) and look; the doubled viewport and the missing dimension texts only showed there.
+
 ## Files
-- `C:\autocad-mcp\acad_guard\`: `guard.py`, `windows.ps1`, `guard_config.json`, `autocad_guarded.py`, `test_start_profile.py`, `events.jsonl`, `shots\`.
+- `C:\autocad-mcp\acad_guard\`: `guard.py`, `windows.ps1`, `guard_config.json`, `autocad_guarded.py`, `message_filter.py`, `chain_layout.py`, `test_start_profile.py`, `lin\`, `events.jsonl`, `shots\`.
 - `C:\autocad-mcp\tools\`: `shot_acad.ps1`, `cmdline.ps1`, `acad_keys.ps1`, `cmd_probe.py`, `pc3_custom_size.py`, `ctb_variant.py`, `sync_skills.py`.
 - The session scratchpad is temporary: move anything useful into `tools` or a skill.

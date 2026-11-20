@@ -15,14 +15,20 @@ a **session guard** that keeps a live AutoCAD usable without a person at the key
   `acad_clear_input` cancels the latter;
 - it works with **localized AutoCAD**: the dialog rules carry English and Russian titles and buttons, and the
   standard linetypes (CENTER, HIDDEN, ...) load under their English names even where the local `acadiso.lin`
-  translates them (checked in Russian AutoCAD 2027).
+  translates them (checked in Russian AutoCAD 2027);
+- an OLE message filter on autocad-mcp-pro's COM thread makes COM retry the calls a busy AutoCAD rejects
+  ("Call was rejected by callee"), which otherwise failed long operations such as a whole plan halfway;
+- architectural chain dimensions get the plot scale they are drawn for (without it their text was too small
+  to see on the sheet), architectural ticks, and a text layout in which no two numbers overlap (a short wall
+  segment's number goes beside it, a neighbour slides aside to make room);
+- table cells are centred.
 
 Extra tools: `acad_health`, `acad_dialogs`, `acad_dialog_press`, `acad_clear_input`, `acad_restart`,
 `acad_events`.
 
 | Folder | What |
 |---|---|
-| `acad_guard/` | `autocad_guarded.py` (the `autocad` server: autocad-mcp-pro + the guard as middleware), `guard.py` (windows, health, start, crash recovery), `windows.ps1` (UI Automation), `guard_config.json` (start profile and dialog rules), `lin/` (English linetype files for localized AutoCAD), `test_start_profile.py` (offline test). |
+| `acad_guard/` | `autocad_guarded.py` (the `autocad` server: autocad-mcp-pro + the guard as middleware, plus small patches), `guard.py` (windows, health, start, crash recovery), `windows.ps1` (UI Automation), `message_filter.py` (COM retries for a busy AutoCAD), `chain_layout.py` (where chain dimension texts go), `guard_config.json` (start profile and dialog rules), `lin/` (English linetype files for localized AutoCAD), `test_start_profile.py` (offline test). |
 | `skills/autocad-ops/` | Claude Code skill: starting AutoCAD, dialogs, crashes, a stuck command line, LISP through the command line, big drawings, plot styles, localized AutoCAD. |
 | `tools/` | `cmdline.ps1` (command-line text), `acad_keys.ps1` (real keystrokes), `shot_acad.ps1` (window screenshot), `cmd_probe.py` (explore an interactive command), `pc3_custom_size.py` (paper sizes beyond DWG To PDF's), `ctb_variant.py` (plot-style variants), `sync_skills.py`. |
 
