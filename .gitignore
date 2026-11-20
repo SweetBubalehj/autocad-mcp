@@ -1,0 +1,16 @@
+# The repo root doubles as the Python venv (python -m venv .): venv files stay out.
+/Lib/
+/Include/
+/Scripts/
+/share/
+/pyvenv.cfg
+
+__pycache__/
+*.pyc
+*.bak
+
+# runtime state of the AutoCAD guard: logs, screenshots, open-document snapshot, last .docx export time
+/acad_guard/events.jsonl
+/acad_guard/session_state.json
+/acad_guard/shots/
+/acad_guard/open_with_expected.txt

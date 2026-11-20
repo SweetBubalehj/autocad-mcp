@@ -1,0 +1,4 @@
+* text=auto eol=lf
+*.png binary
+# AutoCAD reads .lin files with Windows line ends
+*.lin text eol=crlf

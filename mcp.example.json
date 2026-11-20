@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "autocad": {
+      "type": "stdio",
+      "command": "C:\autocad-mcp\Scripts\python.exe",
+      "args": ["C:\autocad-mcp\acad_guard\autocad_guarded.py"],
+      "env": {"AUTOCAD_MCP_BACKEND": "com"}
+    }
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "start": {
+    "profile": "auto",
+    "note": "how the guard starts AutoCAD: 'auto' = through SOFiCAD's launcher if it is installed, else plain AutoCAD; 'soficad' / 'autocad' force one. The environment variable ACAD_GUARD_PROFILE overrides this.",
+    "soficad": {
+      "launcher": "C:\\Program Files\\SOFiSTiK\\2027\\SOFiCAD 2027 (AutoCAD 2027)\\soficad_launcher.exe",
+      "launcher_args": ["--application", "soficad"],
+      "acad_exe": "C:\\Program Files\\Autodesk\\AutoCAD 2027\\acad.exe",
+      "acad_args": ["/product", "ACAD", "/language", "en-US", "/t", "sofstart mm_enu.dwt",
+                    "/ld", "C:\\Program Files\\Autodesk\\AutoCAD 2027\\sof_base_loader_ui.arx", "/p", "SOFiCAD 2027"],
+      "require_soficad_ui": true
+    },
+    "autocad": {
+      "acad_exe": "auto",
+      "acad_args": ["/nologo"],
+      "note": "acad_exe 'auto' = the newest Program Files\\Autodesk\\AutoCAD 20xx\\acad.exe; give a path to pick another"
+    },
+    "ready_timeout_s": 300
+  },
+  "auto_dismiss_info_dialogs": true,
+  "info_buttons": ["OK", "ОК", "Close", "Закрыть", "Schließen"],
+  "palette_titles": ["SOFiCAD-B Profiles", "Properties", "Layer Properties Manager", "Tool Palettes",
+                     "Drawing Recovery Manager", "External References", "LOG", "Messages", "Свойства", "Внешние ссылки"],
+  "note": "titles and buttons in English and Russian: the Russian ones are from AutoCAD 2027 ru-RU (SECURELOAD seen live; the others from its resources AcTaskDialogs / acadres / AcRecoverall)",
+  "dialog_rules": [
+    {"name": "Autodesk trial/licensing banner", "process": "AdskLicensingAgent", "buttons": ["close"], "close": true},
+    {"name": "Drawing Recovery notice (previous session crashed)", "title": "^(Drawing Recovery|Восстановление чертежа)$",
+     "buttons": ["Закрыть", "Close"], "close": true, "kind": "post-crash"},
+    {"name": "SOFiCAD trial/licence notice (first load of the reinforcement modules)",
+     "title": "^SOFiSTiK: Product Activation", "buttons": ["Continue"]},
+    {"name": "SOFiCAD assertion", "title": "^SOFiSTiK: Assertion failed", "buttons": ["Ignore"],
+     "note": "never press Abort - it kills AutoCAD"},
+    {"name": "SECURELOAD: unsigned file", "title": "^(Security - Unsigned Executable File|Безопасность — исполняемый файл без подписи)",
+     "buttons": ["Do Not Load", "Не загружать"]},
+    {"name": "missing references (xref/images)", "title": "^(References\\b|Ссылки — )",
+     "buttons": ["Ignore the unresolved references and continue", "Игнорировать необработанные ссылки и продолжить"]},
+    {"name": "proxy information", "title": "Proxy Information|Информация о прокси-объектах",
+     "buttons": ["Show proxy graphics", "Показывать прокси-графику", "Close", "Закрыть", "OK", "ОК"], "close": true},
+    {"name": "SOFiCAD schedule warning", "title": "^SOFiSTiK: Reinforcement Export", "buttons": ["Yes"]},
+    {"name": "SOFiCAD 'new bar is similar to POS n - use it?' -> No (asks about the next similar mark, then creates the new one)",
+     "title": "^SOFiSTiK$", "text": "is similar to Rebar Bar POS", "buttons": ["No"]},
+    {"name": "SOFiCAD asks where its project database is (German template Sofstart.dwt; then again on document switches) -> Abbrechen (use Sofstart_enu.dwt)",
+     "title": "^Position Projektdatenbank$", "buttons": ["Abbrechen", "Cancel"]},
+    {"name": "Windows 'open with' (after .docx export)", "process": "OpenWith", "buttons": [], "close": true},
+    {"name": "AutoCAD crash / error report", "title": "(?i)error report|fatal error|unhandled exception|error aborting|has stopped working|unexpected|неустранимая ошибка|прекращена работа",
+     "buttons": ["ОК", "OK", "Close", "Закрыть", "Don't send", "Do not send", "Не отправлять"], "close": true, "kind": "crash",
+     "note": "the Russian title words are not seen live yet (a crash cannot be brought up on purpose)"},
+    {"name": "AutoCAD cannot continue - save a recovery copy (*_recover.dwg, original untouched)",
+     "title": "^AutoCAD Alert$", "text": "(?i)cannot continue", "buttons": ["Да", "Yes"], "kind": "crash",
+     "note": "English only: the Russian title and text are not known yet"},
+    {"name": "Windows Error Reporting", "process": "WerFault", "buttons": ["Close the program", "Закрыть программу", "Close"], "close": true, "kind": "crash"}
+  ]
+}
